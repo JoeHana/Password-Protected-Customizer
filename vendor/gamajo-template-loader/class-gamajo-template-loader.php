@@ -1,17 +1,16 @@
 <?php
-
 /**
- * Template Loader Class.
+ * Template Loader for Plugins.
  *
- * This is used to load templates and make template overrides through theme or other plugins possible.
- *
- * @since      1.0.0
- * @package    Password_Protected_Customizer
- * @subpackage Password_Protected_Customizer/includes
- * @author     Joe Hana <me@joehana.com>
+ * @package   Gamajo_Template_Loader
+ * @author    Gary Jones
+ * @link      http://github.com/GaryJones/Gamajo-Template-Loader
+ * @copyright 2013 Gary Jones
+ * @license   GPL-2.0+
+ * @version   1.2.0
  */
 
-if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
+if ( ! class_exists( 'Gamajo_Template_Loader' ) ) {
 
 	/**
 	 * Template loader.
@@ -20,11 +19,10 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 	 *
 	 * When using in a plugin, create a new class that extends this one and just overrides the properties.
 	 *
-	 * @package Template_Loader
+	 * @package Gamajo_Template_Loader
 	 * @author  Gary Jones
 	 */
-	class Password_Protected_Customizer_Template_Loader {
-		
+	class Gamajo_Template_Loader {
 		/**
 		 * Prefix for filter names.
 		 *
@@ -32,7 +30,7 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 *
 		 * @var string
 		 */
-		protected $filter_prefix = 'password_protected_customizer';
+		protected $filter_prefix = 'your_plugin';
 
 		/**
 		 * Directory name where custom templates for this plugin should be found in the theme.
@@ -43,7 +41,7 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 *
 		 * @var string
 		 */
-		protected $theme_template_directory = 'templates';
+		protected $theme_template_directory = 'plugin-templates';
 
 		/**
 		 * Reference to the root directory path of this plugin.
@@ -56,7 +54,7 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 *
 		 * @var string
 		 */
-		protected $plugin_directory = PPC_PATH;
+		protected $plugin_directory = 'YOUR_PLUGIN_DIR';
 
 		/**
 		 * Directory name where templates are found in this plugin.
@@ -70,7 +68,25 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 * @var string
 		 */
 		protected $plugin_template_directory = 'templates';
-
+		
+		/**
+		 * Internal use only: Store located template paths.
+		 *
+		 * @var array
+		 */
+		private $template_path_cache = array();
+		
+		/**
+		 * Internal use only: Store variable names used for template data.
+		 *
+		 * Means unset_template_data() can remove all custom references from $wp_query.
+		 *
+		 * Initialized to contain the default 'data'.
+		 *
+		 * @var array
+		 */
+		private $template_data_var_names = array('data');
+		
 		/**
 		 * Clean up template data.
 		 *
@@ -92,7 +108,6 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 * @return string
 		 */
 		public function get_template_part( $slug, $name = null, $load = true ) {
-
 			// Execute code for this part.
 			do_action( 'get_template_part_' . $slug, $slug, $name );
 
@@ -121,6 +136,11 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 			global $wp_query;
 
 			$wp_query->query_vars[ $var_name ] = (object) $data;
+			
+			// Add $var_name to custom variable store if not default value
+			if( $var_name !== 'data' ) {
+				$this->template_data_var_names[] = $var_name;
+			}
 		}
 
 		/**
@@ -132,9 +152,15 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 */
 		public function unset_template_data() {
 			global $wp_query;
-
-			if ( isset( $wp_query->query_vars['data'] ) ) {
-				unset( $wp_query->query_vars['data'] );
+			
+			// Remove any duplicates from the custom variable store
+			$custom_var_names = array_unique( $this->template_data_var_names );
+			
+			// Remove each custom data reference from $wp_query
+			foreach ( $custom_var_names as $var ) {
+				if ( isset( $wp_query->query_vars[$var] ) ) {
+					unset( $wp_query->query_vars[$var] );
+				}
 			}
 		}
 
@@ -187,23 +213,35 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		 * @return string The template filename if one is located.
 		 */
 		public function locate_template( $template_names, $load = false, $require_once = true ) {
-			// No file found yet.
-			$located = false;
+		
+			// Use $template_names as a cache key - either first element of array or the variable itself if it's a string
+			$cache_key = is_array( $template_names ) ? $template_names[0] : $template_names;
+			
+			// If the key is in the cache array, we've already located this file.
+			if ( isset( $this->template_path_cache[$cache_key] ) ) {
+				$located = $this->template_path_cache[$cache_key];
+			} else {
+			
+				// No file found yet.
+				$located = false;
 
-			// Remove empty entries.
-			$template_names = array_filter( (array) $template_names );
-			$template_paths = $this->get_template_paths();
+				// Remove empty entries.
+				$template_names = array_filter( (array) $template_names );
+				$template_paths = $this->get_template_paths();
 
-			// Try to find a template file.
-			foreach ( $template_names as $template_name ) {
-				// Trim off any slashes from the template name.
-				$template_name = ltrim( $template_name, '/' );
+				// Try to find a template file.
+				foreach ( $template_names as $template_name ) {
+					// Trim off any slashes from the template name.
+					$template_name = ltrim( $template_name, '/' );
 
-				// Try locating this template file by looping through the template paths.
-				foreach ( $template_paths as $template_path ) {
-					if ( file_exists( $template_path . $template_name ) ) {
-						$located = $template_path . $template_name;
-						break 2;
+					// Try locating this template file by looping through the template paths.
+					foreach ( $template_paths as $template_path ) {
+						if ( file_exists( $template_path . $template_name ) ) {
+							$located = $template_path . $template_name;
+							// Store the template path in the cache
+							$this->template_path_cache[$cache_key] = $located;
+							break 2;
+						}
 					}
 				}
 			}
@@ -266,6 +304,5 @@ if ( ! class_exists( 'Password_Protected_Customizer_Template_Loader' ) ) {
 		protected function get_templates_dir() {
 			return trailingslashit( $this->plugin_directory ) . $this->plugin_template_directory;
 		}
-		
 	}
 }
